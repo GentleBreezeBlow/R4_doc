@@ -10,7 +10,7 @@
 # !! *Please use standard verilog code.             !!
 # !! *Not support SystemVerilog.                    !!
 # !! *Not support macros with the same name.        !!
-# !!     eg. `undef in Synopsys DW IP.              !!
+# !!     e.g. `undef in Synopsys DW IP.              !!
 # !! *Not support Very Complex situatiions.         !!
 # !!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!
 #
@@ -102,12 +102,18 @@ print "all module : @all_module_name\n";
 ###################### find reg/instantiation relationship ######################
 open (REGS_RESULT, ">regs.data") or die "Can't write regs.data: $!";
 open (INST_DATA, ">inst.data") or die "Can't write inst.data: $!";
+
 $name_inst = $top_module;
-@file = find_module($name_inst);
+# top module regs
+my @file = find_module($name_inst);
+@file = replace_param('', @file);
 find_signals($name_inst, @file);
+# instantiation relationship
 find_inst(@file);
+
 close INST_DATA;
 close REGS_RESULT;
+
 
 
 #################################################################################
@@ -545,8 +551,8 @@ sub replace_param {
 }
 
 =head1     find reg signals in module
-    @INPUT $name_inst, @file
-    @return  NONE
+    @INPUT  $name_inst, @file
+    @return NONE
         Find all regs, including single bit and multi bits.
         Write results such as "top.u_a.reg_a[1:0]" to <REGS_RESULT>.
 =cut
@@ -579,7 +585,7 @@ sub find_signals {
     my $lines = join ('', @file);
     $lines =~ s/output\s+reg\s+/output /g;              # remove "output reg"
 
-    # find common regs.
+    # find common defined regs.
     # use "while ($lines)" instead of "foreach $a (@file)" to avoid cross line matching
     # like this :  reg [1:0] aa,
     #                        bb;
@@ -636,6 +642,8 @@ sub find_signals {
     my %hash;
     @regs_always = grep {++$hash{$_}<2} @regs_always;
 
+    # store the real registers. 
+    # register must appear in the timing always block.
     foreach $a (@regs_bit) {
         if(grep { $a eq $_} @regs_always){
             push(@regs_bit_real, $a);
@@ -649,18 +657,102 @@ sub find_signals {
         }
     }
 
+    # convert to real number
+    # e.g. "[5-1:0]", "[5 - 1:0]", "[3'h7:1'b0]", "[2'b11 - 1:0]" etc.
+    @regs_bits_high_real = string_convert_number(@regs_bits_high_real);
+    @regs_bits_low_real  = string_convert_number(@regs_bits_low_real);
+
+    # output result
     for (my $k = 0 ; $k <= @regs_bit_real ; $k++) {
         if(defined($regs_bit_real[$k])) {
             print REGS_RESULT "$name_inst_tmp.$regs_bit_real[$k]\n";
         }
     }
-
     for (my $k = 0 ; $k <= @regs_bits_real ; $k++) {
         if(defined($regs_bits_real[$k])) {
             print REGS_RESULT "$name_inst_tmp.$regs_bits_real[$k]\[$regs_bits_high_real[$k]:$regs_bits_low_real[$k]\]\n";
         }
     }
 
+}
+
+=head1        string convert to real number
+    @INPUT  @bits
+    @return @bits after converting
+        e.g. "5-1", "5 - 1", "3'h7", "2'b11 - 1" etc.
+=cut
+sub string_convert_number {
+    my (@bits) = @_;
+
+    foreach $a (@bits) {
+        if ($a =~ /(.*)(\-|\+)(.*)/) {
+            my $high=$1;
+            my $low=$3;
+            my $high_number;
+            my $low_number;
+            # \w+ not \d+, because of this situatiom : "8'b0011_0101"
+            if ($high =~ /'(h|H)\s*?(\w+)\s*?/) {
+                $high_number = hex($2);
+            }
+            elsif ($high =~ /'(b|B)\s*?(\w+)\s*?/) {
+                $high_number = oct("0b$2");
+            }
+            elsif ($high =~ /'(o|O)\s*?(\w+)\s*?/) {
+                $high_number = oct("0$2");
+            }
+            elsif ($high =~ /'(d|D)\s*?(\w+)\s*?/) {
+                $high_number = $2;
+            }
+            else {
+                $high_number = $high;
+                $high_number =~ s/^\s+//;
+                $high_number =~ s/\s+$//;
+            }
+            
+            if ($low =~ /'(h|H)\s*?(\w+)\s*?/) {
+                $low_number = hex($2);
+            }
+            elsif ($low =~ /'(b|B)\s*?(\w+)\s*?/) {
+                $low_number = oct("0b$2");
+            }
+            elsif ($low =~ /'(o|O)\s*?(\w+)\s*?/) {
+                $low_number = oct("0$2");
+            }
+            elsif ($low =~ /'(d|D)\s*?(\w+)\s*?/) {
+                $low_number = $2;
+            }
+            else {
+                $low_number = $low;
+                $low_number =~ s/^\s+//;
+                $low_number =~ s/\s+$//;
+            }
+
+            if ($a =~ /\-/) {
+                $a = $high_number - $low_number;
+            }
+            elsif ($a =~ /\+/) {
+                $a = $high_number + $low_number;
+            }
+        }
+        elsif ($a =~ /'(h|H)\s*?(\w+)\s*?/) {
+            $a = hex($2);
+        }
+        elsif ($a =~ /'(b|B)\s*?(\w+)\s*?/) {
+            $a = oct("0b$2");
+        }
+        elsif ($a =~ /'(o|O)\s*?(\w+)\s*?/) {
+            $a = oct("0$2");
+        }
+        elsif ($a =~ /'(d|D)\s*?(\w+)\s*?/) {
+            $a = $2;
+        }
+        else {
+            $a =~ s/^\s+//;
+            $a =~ s/\s+$//;
+        }
+    }
+
+    return @bits;
 }
 
 =head1        find timing always block in module
