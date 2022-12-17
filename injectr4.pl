@@ -1,14 +1,25 @@
 #!/usr/bin/perl
 #################################################################################
 # Author        : ylu
-# Data          : 2022.12.12
-# Revision      : 1.3
+# Data          : 2022.12.17
+# Revision      : 1.4
 # Purpose       : Find all regs.
 #################################################################################
+#
+# !!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!
+# !! *Please use standard verilog code.             !!
+# !! *Not support SystemVerilog.                    !!
+# !! *Not support macros with the same name.        !!
+# !!     eg. `undef in Synopsys DW IP.              !!
+# !! *Not support Very Complex situatiions.         !!
+# !!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!
+#
 ###### updata log ######
 # 22.12.13      identify modules and files, find out basic regs.
 # 22.12.14      fix bug that can't identify parameterized instance module.
-# 22.12.15      add identification macro defination code block
+# 22.12.15      add identification macro defination code blocks.
+# 22.12.17      add support parameterized regs.
+
 
 ############################# read verilog filelist #############################
 print "Please input verilog filelist name:\n";
@@ -44,6 +55,26 @@ open (V_FILELIST_PURE, "<filelist_pure.f");
 @file_list_pure = <V_FILELIST_PURE>;
 close V_FILELIST_PURE;
 
+
+############################# find common parameters ############################
+# find all common parameters for replacing parameters with numbers later.
+@param_common_name;
+@param_common_number;
+foreach $a (@file_list_pure) {
+    open (DEFINE_TMP, "<$a") or die "Can't open $a, $!";
+    my @file = <DEFINE_TMP>;
+    close DEFINE_TMP;
+    foreach $b (@file) {
+         # In Veriog, parameters defined by parameter can only be accessed directly, 
+         # and parameters define by `define can only be accessed by `
+        if($b =~ /\`define\s+(\w+)\s+(.*)$/){              
+            push(@param_common_name, $1);
+            push(@param_common_number, $2);
+        }
+    }
+}
+
+
 ################################ find all modules ###############################
 # Find all modules' name.
 # This is used for finding the module instantiation relationship later.
@@ -67,6 +98,7 @@ print MODULE_FILE_RESULT @module_file_result;
 close MODULE_FILE_RESULT;
 print "all module : @all_module_name\n";
 
+
 ###################### find reg/instantiation relationship ######################
 open (REGS_RESULT, ">regs.data") or die "Can't write regs.data: $!";
 open (INST_DATA, ">inst.data") or die "Can't write inst.data: $!";
@@ -88,7 +120,7 @@ close REGS_RESULT;
     @return NONE
         delete the comment code, and find out the macro definition code.
 =cut
-sub clear_verilog{
+sub clear_verilog {
     my ($file_name_original, @macro_list) = @_;
 
     open (FILE_TMP, "<$file_name_original") or die "Can't open $file_name_original, $!";
@@ -308,11 +340,11 @@ sub find_macro {
 
 =head1       find module
     @INPUT  $module_name
-    @return @file
+    @return @file_real
         If there are multiple modules in a .v file, 
             this function is used for filter out the module used.
 =cut
-sub find_module{
+sub find_module {
     my ($module_name) = @_;
 
     my $file_name;
@@ -329,6 +361,9 @@ sub find_module{
     my @file_real;
     my $flag=0;
     foreach $a (@file) {
+        if($a =~ /\`include/) {
+            push(@file_real, $a);
+        }
         if($a =~ /module\s+$module_name/) {
             $flag = 1;
         }
@@ -350,7 +385,7 @@ sub find_module{
         when the "for" and "foreach" loop recurses to the deepest layer,
             the module is no longer contains instantiation module.
 =cut
-sub find_inst{
+sub find_inst {
     my (@file) = @_;
     for(my $i = 0 ; $i < @file ; $i ++) {
         foreach $a (@all_module_name) {
@@ -368,21 +403,145 @@ sub find_inst{
                     $lines = $1;
                     $count--;
                 }
-                if(($lines =~ /$a\s+(\w+)\s*?\(/s) ||               #  module_name u_mod();
-                   ($lines =~ /$a\s*?\#\s*?\(.*?\)\s*?(\w+).*?\(/s) #  module_name #() u_mod();
-                   ) {
-                   my $name_inst_tmp = $name_inst;
-                   $name_inst .= ".".$1;
-                   print INST_DATA "$name_inst\n";
-                   print "$name_inst\n";
-                   my @file_real = find_module($a);
-                   find_signals($name_inst, @file_real);
-                   find_inst(@file_real);
-                   $name_inst = $name_inst_tmp;
-               }
+                if(($lines !~ /module\s+$a\b/) &&                     # it avoids identifying "module $a"
+                   (($lines =~ /$a\s+(\w+)\s*?\(/s) ||                # module_name u_mod();
+                   ($lines =~ /$a\s*?\#\s*?\([\s|\S]*?\)\s*?(\w+).*?\(/s))  # module_name #() u_mod();
+                   ){
+                    my $name_inst_tmp = $name_inst;
+                    $name_inst .= ".".$1;
+                    print INST_DATA "$name_inst\n";
+                    print "$name_inst\n";
+                    my @file_real = find_module($a);
+                    my $param_in;
+                    if ($lines =~ /$a\s*?\#\s*?\(([\s|\S]*?)\)\s*?(\w+).*?\(/s) {
+                        $param_in = $1;
+                    }
+                    my @file_real_noparam = replace_param($param_in, @file_real);
+                    find_signals($name_inst, @file_real_noparam);
+                    find_inst(@file_real);
+                    $name_inst = $name_inst_tmp;
+                }
             }
         }
     }
+}
+
+=head1     replace parameters with numbers.
+    @INPUT  $param_in, @file
+    @return @file after replacing
+=cut
+sub replace_param {
+    my ($param_in, @file) = @_;
+
+    my @param_self_name;
+    my @param_self_number;
+
+    # find self parameters.
+    my $lines = join ('', @file);
+    while ( $lines =~ /parameter\s+([\s|\S]*?);/g ) {
+        my $tmp = $1;
+        while ($tmp =~ /([\s|\S]*?),([\s|\S]*)/g) {                 # avoid "localparam AA = 2 , BB = 2'h1;"
+            $tmp = $2;
+            my $tmp_2 = $1;
+            if ($tmp_2 =~ /(\w+)\s*?=\s*?(.*)/g) {
+                push(@param_self_name, $1);
+                my $tmp_number = $2;
+                $tmp_number =~ s/^\s+//;
+                $tmp_number =~ s/\s+$//;
+                push(@param_self_number, $tmp_number);
+            }
+        }
+        if ($tmp =~ /(\w+)\s*?=\s*?(.*)/g) {
+            push(@param_self_name, $1);
+            my $tmp_number = $2;
+            $tmp_number =~ s/^\s+//;
+            $tmp_number =~ s/\s+$//;
+            push(@param_self_number, $tmp_number);
+        }
+    }
+
+    my @param_transmit_name;
+    my @param_transmit_number;
+    my $num = 0;
+    # get the parameters passed in.
+    while ($param_in =~ /([\s|\S]*?),([\s|\S]*)/g) {
+        my $tmp = $1;
+        $param_in = $2;
+        if ($tmp =~ /\.(\w+)\s*?\(([\s|\S]*)\)/g) {                 # "#(.AA(10), .BB(5), .CC(5))"
+            push(@param_transmit_name, $1);
+            my $tmp_number = $2;
+            $tmp_number =~ s/^\s+//;
+            $tmp_number =~ s/\s+$//;
+            push(@param_transmit_number, $tmp_number);
+        }
+        else {                                                      # "#(10, 5, 5)"
+            push(@param_transmit_name, $param_self_name[$num]);
+            my $tmp_number = $tmp;
+            $tmp_number =~ s/^\s+//;
+            $tmp_number =~ s/\s+$//;
+            push(@param_transmit_number, $tmp_number);
+            $num++;
+        }
+    }
+    if ($param_in =~ /\.(\w+)\s*?\(([\s|\S]*)\)/g) {                # "#(.AA(10))"
+        push(@param_transmit_name, $1);
+        my $tmp_number = $2;
+        $tmp_number =~ s/^\s+//;
+        $tmp_number =~ s/\s+$//;
+        push(@param_transmit_number, $tmp_number);
+    }
+    elsif ($param_in =~ /\S/) {                                     # "#(10)"
+        push(@param_transmit_name, $param_self_name[$num]);
+        my $tmp_number = $param_in;
+        $tmp_number =~ s/^\s+//;
+        $tmp_number =~ s/\s+$//;
+        push(@param_transmit_number, $tmp_number);
+    }
+
+    # change the original parameter value to the new value passed.
+    for (my $i = 0 ; $i < @param_transmit_name ; $i ++) {
+        for (my $j = 0 ; $j < @param_self_name ; $j ++) {
+            if ($param_self_name[$j] eq $param_transmit_name[$i]) {
+                $param_self_number[$j] = $param_transmit_number[$i];
+            }
+        }
+    }
+
+    # find localparam
+    while ($lines =~ /localparam\s+([\s|\S]*?);/g) {
+        my $tmp = $1;
+        while ($tmp =~ /([\s|\S]*?),([\s|\S]*)/g) {                 # avoid "localparam AA = 2 , BB = 2'h1;"
+            $tmp = $2;
+            my $tmp_2 = $1;
+            if ($tmp_2 =~ /(\w+)\s*?=\s*?(.*)/g) {
+                push(@param_self_name, $1);
+                my $tmp_number = $2;
+                $tmp_number =~ s/^\s+//;
+                $tmp_number =~ s/\s+$//;
+                push(@param_self_number, $tmp_number);
+            }
+        }
+        if ($tmp =~ /(\w+)\s*?=\s*?(.*)/g) {
+            push(@param_self_name, $1);
+            my $tmp_number = $2;
+            $tmp_number =~ s/^\s+//;
+            $tmp_number =~ s/\s+$//;
+            push(@param_self_number, $tmp_number);
+        }
+    }
+
+    @param_self_name = (@param_self_name, @param_common_name);
+    @param_self_number = (@param_self_number, @param_common_number);
+
+    for ( my $i = 0 ; $i < @param_self_name ; $i ++) {
+        foreach $b (@file) {
+            if ($b !~ /$param_self_name[$i]\s*?=/) {                # when not defined
+                $b =~ s/\`?\b$param_self_name[$i]\b/$param_self_number[$i]/g;
+            }
+        }
+    }
+
+    return @file;
 }
 
 =head1     find reg signals in module
@@ -391,7 +550,7 @@ sub find_inst{
         Find all regs, including single bit and multi bits.
         Write results such as "top.u_a.reg_a[1:0]" to <REGS_RESULT>.
 =cut
-sub find_signals{
+sub find_signals {
     # Perl: When the scalar($) and array(@) parameters are passed in at the same time,
     # the scalar($) needs to be put the first.
     my ($name_inst_tmp, @file) = @_;
@@ -401,14 +560,37 @@ sub find_signals{
     my @regs_bits_high;
     my @regs_bits_low;
 
-    # find all the defined regs.
+    ###### find all the defined regs ######
+    # find "output reg [1:0] aa".
     foreach $a (@file) {
-        if($a =~ /\s*reg\s+\[(\d+):(\d+)\]\s+(.*);/){
+        if($a =~ /output\s+reg\s*?\[(.*?):(.*?)\]\s*?(\w+)/){
+            my $bits_high = $1;
+            my $bits_low = $2;
+            my $bits = $3;
+            push(@regs_bits_high, $bits_high);
+            push(@regs_bits_low,  $bits_low);
+            push(@regs_bits, $bits);
+        }
+        elsif ($a =~ /output\s+reg\s+(\w+)/) {
+            my $bit = $1;
+            push(@regs_bit, $bit);
+        }
+    }
+    my $lines = join ('', @file);
+    $lines =~ s/output\s+reg\s+/output /g;              # remove "output reg"
+
+    # find common regs.
+    # use "while ($lines)" instead of "foreach $a (@file)" to avoid cross line matching
+    # like this :  reg [1:0] aa,
+    #                        bb;
+    while ($lines =~ /(\s+reg\s+[\s|\S]*?;)/g){
+        my $regs_data = $1;
+        if($regs_data =~ /\s+reg\s+\[(.*?):(.*?)\]\s+([\s|\S]*);/g){
             my $bits_high = $1;
             my $bits_low = $2;
             my $bits = $3;
             my $tmp;
-            while ($bits =~ /(.*),(.*)/) {
+            while ($bits =~ /([\s|\S]*),([\s|\S]*)/g) {
                 $bits = $1;
                 $tmp = $2;
                 $tmp =~ s/^\s+//;                       # clear space
@@ -417,17 +599,16 @@ sub find_signals{
                 push(@regs_bits_low,  $bits_low);
                 push(@regs_bits, $tmp);
             }
-            
             $bits =~ s/^\s+//;
             $bits =~ s/\s+$//;
             push(@regs_bits_high, $bits_high);
             push(@regs_bits_low,  $bits_low);
             push(@regs_bits, $bits);
         }
-        elsif ($a =~ /\s*reg\s+(.*);/) {
+        elsif ($regs_data =~ /\s+reg\s+([\s|\S]*);/g) {
             my $bit = $1;
             my $tmp;
-            while ($bit =~ /(.*),(.*)/) {
+            while ($bit =~ /([\s|\S]*),([\s|\S]*)/g) {
                 $bit = $1;
                 $tmp = $2;
                 $tmp =~ s/^\s+//;
@@ -487,7 +668,7 @@ sub find_signals{
     @return @regs_always
         Find all regs in timing always@ block of module.
 =cut
-sub find_always{
+sub find_always {
     my ($num, @file) = @_;
     my $num_end = $num;
 
@@ -506,8 +687,21 @@ sub find_always{
 
     my @regs_always;
     for(my $n = $num ; $n < $num_end ; $n++) {
-        if ($file[$n] =~ /\s*(\w+)\s*<?\s*=/) {
+        if ($file[$n] =~ /\s*(\w+)\s*<?\s*=/) {             # test_reg <= 0;
             push(@regs_always, $1);
+        }
+        elsif ($file[$n] =~ /\s*?\{(.*?)\}\s*<?\s*=/) {     # {test1, test2} <= 0;
+            my $tmp = $1;
+            while ($tmp =~ /([\s|\S]*),([\s|\S]*)/g) {
+                $tmp = $1;
+                my $tmp_2 = $2;
+                $tmp_2 =~ s/^\s+//;
+                $tmp_2 =~ s/\s+$//;
+                push(@regs_always, $tmp_2);
+            }
+            $tmp =~ s/^\s+//;
+            $tmp =~ s/\s+$//;
+            push(@regs_always, $tmp);
         }
     }
 
