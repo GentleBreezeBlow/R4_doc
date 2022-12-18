@@ -1,17 +1,14 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.17
-# Revision      : 1.4
+# Data          : 2022.12.18
+# Revision      : 1.5
 # Purpose       : Find all regs.
 ##################################################################################
 #
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # !! *Please use standard verilog code.                                         !!
 # !! *Not support SystemVerilog.                                                !!
-# !! *Not support register cross line in timing always block temporarily.       !!
-# !!     e.g. " {reg0,                                                          !!
-# !!             reg1} <= 2'b00;"                                               !!
 # !! *Not support macros with the same name.                                    !!
 # !!     e.g. `undef in Synopsys DW IP.                                         !!
 # !! *Not support Very Complex situatiions.                                     !!
@@ -22,8 +19,8 @@
 # 22.12.14      fix bug that can't identify parameterized instance module.
 # 22.12.15      add identification macro defination code blocks.
 # 22.12.17      add support parameterized regs.
-# 22.12.18      add support still parameters in the parameter  (parameter AA=BB+1;)
-#               and bit width multiple addition and subtraction. (1'b1-2+3'h7)
+# 22.12.18      add support parameters in the parameter  (e.g. parameter AA=BB+1;)
+#               and bit width multiple addition and subtraction. (e.g. 1'b1-2+3'h7)
 
 
 ############################# read verilog filelist ##############################
@@ -118,7 +115,7 @@ $name_inst = $top_module;
 my @file_top = find_module($name_inst);
 my ($file_noparam_top, $param_this_layer_name_top, $param_this_layer_number_top) 
    = replace_param('', \@file_top, \@param_common_name, \@param_common_number);
-find_signals($name_inst, @{$file_noparam});
+find_signals($name_inst, @{$file_noparam_top});
 # instantiation relationship
 find_inst(\@file_top, $param_this_layer_name_top, $param_this_layer_number_top);
 
@@ -401,7 +398,6 @@ sub find_module {
         Use the recursion idea to find the deepest instantiation module.
         when the "for" and "foreach" loop recurses to the deepest layer,
             the module is no longer contains instantiation module.
-
         @param_this_layer_name, @param_this_layer_number, 
         @param_last_layer_name, @param_last_layer_number, 
             these variables are used to avoid one situation: "#(.AA(BB))"
@@ -675,9 +671,9 @@ sub find_signals {
             my $bits_low = $2;
             my $bits = $3;
             my $tmp;
-            while ($bits =~ /([\s|\S]*),([\s|\S]*)/g) {
-                $bits = $1;
-                $tmp = $2;
+            while ($bits =~ /([\s|\S]*?),([\s|\S]*)/g) {
+                $bits = $2;
+                $tmp = $1;
                 $tmp =~ s/^\s+//;                       # clear space
                 $tmp =~ s/\s+$//;                       # clear space
                 push(@regs_bits_high, $bits_high);
@@ -693,9 +689,9 @@ sub find_signals {
         elsif ($regs_data =~ /\s+reg\s+([\s|\S]*);/g) {
             my $bit = $1;
             my $tmp;
-            while ($bit =~ /([\s|\S]*),([\s|\S]*)/g) {
-                $bit = $1;
-                $tmp = $2;
+            while ($bit =~ /([\s|\S]*?),([\s|\S]*)/g) {
+                $bit = $2;
+                $tmp = $1;
                 $tmp =~ s/^\s+//;
                 $tmp =~ s/\s+$//;
                 push(@regs_bit, $tmp);
@@ -794,23 +790,23 @@ sub find_always {
     }
 
     my @regs_always;
-    for(my $n = $num ; $n < $num_end ; $n++) {
-        if ($file[$n] =~ /\s*(\w+)\s*<?\s*=/) {             # test_reg <= 0;
-            push(@regs_always, $1);
+    
+    my $lines = join ('', @file[$num...$num_end]);
+    while ($lines =~ /\s*(\w+)\s*?<?\s*=/g) {               # test_reg <= 0;
+        push(@regs_always, $1);
+    }
+    while ($lines =~ /\s*?\{([\s|\S]*?)\}\s*<?\s*=/g) {     # {test1, test2} <= 0;
+        my $tmp = $1;
+        while ($tmp =~ /([\s|\S]*),([\s|\S]*)/g) {
+            $tmp = $1;
+            my $tmp_2 = $2;
+            $tmp_2 =~ s/^\s+//;
+            $tmp_2 =~ s/\s+$//;
+            push(@regs_always, $tmp_2);
         }
-        elsif ($file[$n] =~ /\s*?\{(.*?)\}\s*<?\s*=/) {     # {test1, test2} <= 0;
-            my $tmp = $1;
-            while ($tmp =~ /([\s|\S]*),([\s|\S]*)/g) {
-                $tmp = $1;
-                my $tmp_2 = $2;
-                $tmp_2 =~ s/^\s+//;
-                $tmp_2 =~ s/\s+$//;
-                push(@regs_always, $tmp_2);
-            }
-            $tmp =~ s/^\s+//;
-            $tmp =~ s/\s+$//;
-            push(@regs_always, $tmp);
-        }
+        $tmp =~ s/^\s+//;
+        $tmp =~ s/\s+$//;
+        push(@regs_always, $tmp);
     }
 
     return @regs_always;
