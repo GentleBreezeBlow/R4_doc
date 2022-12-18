@@ -1,27 +1,32 @@
 #!/usr/bin/perl
-#################################################################################
+##################################################################################
 # Author        : ylu
 # Data          : 2022.12.17
 # Revision      : 1.4
 # Purpose       : Find all regs.
-#################################################################################
+##################################################################################
 #
-# !!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!
-# !! *Please use standard verilog code.             !!
-# !! *Not support SystemVerilog.                    !!
-# !! *Not support macros with the same name.        !!
-# !!     e.g. `undef in Synopsys DW IP.              !!
-# !! *Not support Very Complex situatiions.         !!
-# !!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# !! *Please use standard verilog code.                                         !!
+# !! *Not support SystemVerilog.                                                !!
+# !! *Not support register cross line in timing always block temporarily.       !!
+# !!     e.g. " {reg0,                                                          !!
+# !!             reg1} <= 2'b00;"                                               !!
+# !! *Not support macros with the same name.                                    !!
+# !!     e.g. `undef in Synopsys DW IP.                                         !!
+# !! *Not support Very Complex situatiions.                                     !!
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Warning !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 #
 ###### updata log ######
 # 22.12.13      identify modules and files, find out basic regs.
 # 22.12.14      fix bug that can't identify parameterized instance module.
 # 22.12.15      add identification macro defination code blocks.
 # 22.12.17      add support parameterized regs.
+# 22.12.18      add support still parameters in the parameter  (parameter AA=BB+1;)
+#               and bit width multiple addition and subtraction. (1'b1-2+3'h7)
 
 
-############################# read verilog filelist #############################
+############################# read verilog filelist ##############################
 print "Please input verilog filelist name:\n";
 $verilog_files = "filelist.f";#<STDIN>;
 chomp($verilog_files);
@@ -41,7 +46,7 @@ open (MACRO_LIST, "<$macrolist_name") or die "Can't open $macrolist_name: $!";
 close MACRO_LIST;
 
 
-############################### clear verilog code ##############################
+############################### clear verilog code ###############################
 # First, filter out verilog code comments.
 # And Pick the part that meets the macro definition.
 mkdir "pure_files";
@@ -56,7 +61,7 @@ open (V_FILELIST_PURE, "<filelist_pure.f");
 close V_FILELIST_PURE;
 
 
-############################# find common parameters ############################
+############################# find common parameters #############################
 # find all common parameters for replacing parameters with numbers later.
 @param_common_name;
 @param_common_number;
@@ -67,15 +72,20 @@ foreach $a (@file_list_pure) {
     foreach $b (@file) {
          # In Veriog, parameters defined by parameter can only be accessed directly, 
          # and parameters define by `define can only be accessed by `
-        if($b =~ /\`define\s+(\w+)\s+(.*)$/){              
+        if($b =~ /\`define\s+(\w+)\s+(.*)\n?$/){              
             push(@param_common_name, $1);
             push(@param_common_number, $2);
         }
     }
 }
 
+# The two global arrays @param_self_name_global and @param_self_number_global
+# are used for recursive subfunction 'replace_param_in_param'.
+@param_self_name_global;
+@param_self_number_global;
 
-################################ find all modules ###############################
+
+################################ find all modules ################################
 # Find all modules' name.
 # This is used for finding the module instantiation relationship later.
 @all_module_name;
@@ -99,28 +109,29 @@ close MODULE_FILE_RESULT;
 print "all module : @all_module_name\n";
 
 
-###################### find reg/instantiation relationship ######################
+###################### find reg/instantiation relationship #######################
 open (REGS_RESULT, ">regs.data") or die "Can't write regs.data: $!";
 open (INST_DATA, ">inst.data") or die "Can't write inst.data: $!";
 
 $name_inst = $top_module;
 # top module regs
-my @file = find_module($name_inst);
-@file = replace_param('', @file);
-find_signals($name_inst, @file);
+my @file_top = find_module($name_inst);
+my ($file_noparam_top, $param_this_layer_name_top, $param_this_layer_number_top) 
+   = replace_param('', \@file_top, \@param_common_name, \@param_common_number);
+find_signals($name_inst, @{$file_noparam});
 # instantiation relationship
-find_inst(@file);
+find_inst(\@file_top, $param_this_layer_name_top, $param_this_layer_number_top);
 
 close INST_DATA;
 close REGS_RESULT;
 
 
 
-#################################################################################
+##################################################################################
 #
 #   sub functions
 #
-#################################################################################
+##################################################################################
 =head1       clear verilog code
     @INPUT  $file_name_original, @macro_list
     @return NONE
@@ -367,13 +378,13 @@ sub find_module {
     my @file_real;
     my $flag=0;
     foreach $a (@file) {
-        if($a =~ /\`include/) {
-            push(@file_real, $a);
-        }
         if($a =~ /module\s+$module_name/) {
             $flag = 1;
         }
         if($a =~ /endmodule/) {
+            if ($flag == 1) {
+                push(@file_real, $a);
+            }
             $flag = 0;
         }
         if($flag == 1) {
@@ -385,14 +396,22 @@ sub find_module {
 }
 
 =head1      find instantiation relationship
-    @INPUT  @file
+    @INPUT  \@file_in, \@param_last_layer_name, \@param_last_layer_number
     @return NONE
         Use the recursion idea to find the deepest instantiation module.
         when the "for" and "foreach" loop recurses to the deepest layer,
             the module is no longer contains instantiation module.
+
+        @param_this_layer_name, @param_this_layer_number, 
+        @param_last_layer_name, @param_last_layer_number, 
+            these variables are used to avoid one situation: "#(.AA(BB))"
+            the parameters passed in the instantiation module are not numbers
+            but parameters from last layer. 
+            This may set multiple layers of parameters.
 =cut
 sub find_inst {
-    my (@file) = @_;
+    my ($file_in, $param_last_layer_name, $param_last_layer_number) = @_;
+    my @file = @{$file_in};
     for(my $i = 0 ; $i < @file ; $i ++) {
         foreach $a (@all_module_name) {
             if( $file[$i] =~ /\b$a\b/) {
@@ -422,9 +441,10 @@ sub find_inst {
                     if ($lines =~ /$a\s*?\#\s*?\(([\s|\S]*?)\)\s*?(\w+).*?\(/s) {
                         $param_in = $1;
                     }
-                    my @file_real_noparam = replace_param($param_in, @file_real);
-                    find_signals($name_inst, @file_real_noparam);
-                    find_inst(@file_real);
+                    my ($file_real_noparam, $param_this_layer_name, $param_this_layer_number) 
+                         = replace_param($param_in, \@file_real, $param_last_layer_name, $param_last_layer_number);
+                    find_signals($name_inst, @{$file_real_noparam});
+                    find_inst(\@file_real, $param_this_layer_name, $param_this_layer_number);
                     $name_inst = $name_inst_tmp;
                 }
             }
@@ -433,11 +453,14 @@ sub find_inst {
 }
 
 =head1     replace parameters with numbers.
-    @INPUT  $param_in, @file
-    @return @file after replacing
+    @INPUT  $param_in, \@file, \@param_last_layer_name, \@param_last_layer_number
+    @return \@file after replacing, \@param_self_name(this layer), \@param_self_number(this layer)
 =cut
 sub replace_param {
-    my ($param_in, @file) = @_;
+    my ($param_in, $file_in, $param_last_layer_name_in, $param_last_layer_number_in) = @_;
+    my @file = @{$file_in};
+    my @param_last_layer_name = @{$param_last_layer_name_in};
+    my @param_last_layer_number = @{$param_last_layer_number_in};
 
     my @param_self_name;
     my @param_self_number;
@@ -504,6 +527,17 @@ sub replace_param {
         push(@param_transmit_number, $tmp_number);
     }
 
+    # If parameters passed in are the parameters of the previous layer.
+    for (my $i = 0 ; $i < @param_transmit_number ; $i ++) {
+        if ($param_transmit_number[$i] !~ /\d/) {                   # "#(.AA(BB))"
+            for (my $j = 0 ; $j < @param_last_layer_name ; $j ++) {
+                if ($param_transmit_number[$i] eq $param_last_layer_name[$j]) {
+                    $param_transmit_number[$i] = $param_last_layer_number[$j];
+                }
+            }
+        }
+    }
+
     # change the original parameter value to the new value passed.
     for (my $i = 0 ; $i < @param_transmit_name ; $i ++) {
         for (my $j = 0 ; $j < @param_self_name ; $j ++) {
@@ -539,15 +573,60 @@ sub replace_param {
     @param_self_name = (@param_self_name, @param_common_name);
     @param_self_number = (@param_self_number, @param_common_number);
 
+    # assign the parameters of current module to the global array 
+    # @param_self_name_global and @param_self_number_global, so that 
+    # recursive subfunction 'replace_param_in_param' can be used.
+    @param_self_name_global = @param_self_name;
+    @param_self_number_global = @param_self_number;
+    for (my $i = 0 ; $i < @param_self_number_global ; $i ++) {
+        $param_self_number_global[$i] = replace_param_in_param($param_self_number_global[$i]);
+    }
+    # reassign the processed global array to the self array.
+    @param_self_name = @param_self_name_global;
+    @param_self_number = @param_self_number_global;
+
     for ( my $i = 0 ; $i < @param_self_name ; $i ++) {
         foreach $b (@file) {
             if ($b !~ /$param_self_name[$i]\s*?=/) {                # when not defined
-                $b =~ s/\`?\b$param_self_name[$i]\b/$param_self_number[$i]/g;
+                my $tmp_change = $param_self_number[$i];
+                $tmp_change =~ s/^\s+//;
+                $tmp_change =~ s/\s+$//;
+                $b =~ s/\`?\b$param_self_name[$i]\b/$tmp_change/g;
             }
         }
     }
 
-    return @file;
+    return (\@file, \@param_self_name, \@param_self_number);
+}
+
+=head1      Replace parameters in parameters
+    @INPUT  the parameter
+    @return the parameter after replacing
+        Recursive subfunction to avoid this situation :
+        # `define AA 1                  # `define AA 1
+        # `define BB `AA+1              # parameter BB = `AA + 1
+        # `define CC `BB+1              # parameter CC =  BB+1
+        etc.
+=cut
+sub replace_param_in_param {
+    my ($tmp_param_number) = @_;
+
+    for (my $j = 0 ; $j < @param_self_name_global ; $j ++) {
+        if ($tmp_param_number =~ /\b$param_self_name_global[$j]\b/){
+            my $tmp_number = $param_self_number_global[$j];
+            $tmp_number =~ s/^\s+//;
+            $tmp_number =~ s/\s+$//;
+            $tmp_param_number =~ s/\`?\b$param_self_name_global[$j]\b/$tmp_number/g;
+        }
+    }
+
+    for (my $j = 0 ; $j < @param_self_name_global ; $j ++) {
+        if ($tmp_param_number =~ /\b$param_self_name_global[$j]\b/) {
+            $tmp_param_number = replace_param_in_param($tmp_param_number);
+        }
+    }
+
+    return $tmp_param_number;
 }
 
 =head1     find reg signals in module
@@ -658,9 +737,25 @@ sub find_signals {
     }
 
     # convert to real number
-    # e.g. "[5-1:0]", "[5 - 1:0]", "[3'h7:1'b0]", "[2'b11 - 1:0]" etc.
-    @regs_bits_high_real = string_convert_number(@regs_bits_high_real);
-    @regs_bits_low_real  = string_convert_number(@regs_bits_low_real);
+    # e.g. "[5-1:0]", "[5 - 1 + 21:0]", "[3'h7:1'b0]", "[2'b11 - 1:0]" etc.
+    foreach $a (@regs_bits_high_real) {
+        $a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                 # if "0011 + 1", then "11+1". avoid being mistaken for octal.
+        $a =~ s/\d*?\'(h|H)\s*?(\w+)\s*?/0x$2/g;        # hexadecimal
+        $a =~ s/\d*?\'(b|B)\s*?(\w+)\s*?/0b$2/g;        # binary
+        $a =~ s/\d*?\'(o|O)\s*?(\w+)\s*?/0$2/g;         # octal
+        $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;      # decimal
+
+        $a = eval($a);
+    }
+    foreach $a (@regs_bits_low_real) {
+        $a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                 # if "0011 + 1", then "11+1". avoid being mistaken for octal.
+        $a =~ s/\d*?\'(h|H)\s*?(\w+)\s*?/0x$2/g;        # hexadecimal
+        $a =~ s/\d*?\'(b|B)\s*?(\w+)\s*?/0b$2/g;        # binary
+        $a =~ s/\d*?\'(o|O)\s*?(\w+)\s*?/0$2/g;         # octal
+        $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;      # decimal
+
+        $a = eval($a);
+    }
 
     # output result
     for (my $k = 0 ; $k <= @regs_bit_real ; $k++) {
@@ -674,85 +769,6 @@ sub find_signals {
         }
     }
 
-}
-
-=head1        string convert to real number
-    @INPUT  @bits
-    @return @bits after converting
-        e.g. "5-1", "5 - 1", "3'h7", "2'b11 - 1" etc.
-=cut
-sub string_convert_number {
-    my (@bits) = @_;
-
-    foreach $a (@bits) {
-        if ($a =~ /(.*)(\-|\+)(.*)/) {
-            my $high=$1;
-            my $low=$3;
-            my $high_number;
-            my $low_number;
-            # \w+ not \d+, because of this situatiom : "8'b0011_0101"
-            if ($high =~ /'(h|H)\s*?(\w+)\s*?/) {
-                $high_number = hex($2);
-            }
-            elsif ($high =~ /'(b|B)\s*?(\w+)\s*?/) {
-                $high_number = oct("0b$2");
-            }
-            elsif ($high =~ /'(o|O)\s*?(\w+)\s*?/) {
-                $high_number = oct("0$2");
-            }
-            elsif ($high =~ /'(d|D)\s*?(\w+)\s*?/) {
-                $high_number = $2;
-            }
-            else {
-                $high_number = $high;
-                $high_number =~ s/^\s+//;
-                $high_number =~ s/\s+$//;
-            }
-            
-            if ($low =~ /'(h|H)\s*?(\w+)\s*?/) {
-                $low_number = hex($2);
-            }
-            elsif ($low =~ /'(b|B)\s*?(\w+)\s*?/) {
-                $low_number = oct("0b$2");
-            }
-            elsif ($low =~ /'(o|O)\s*?(\w+)\s*?/) {
-                $low_number = oct("0$2");
-            }
-            elsif ($low =~ /'(d|D)\s*?(\w+)\s*?/) {
-                $low_number = $2;
-            }
-            else {
-                $low_number = $low;
-                $low_number =~ s/^\s+//;
-                $low_number =~ s/\s+$//;
-            }
-
-            if ($a =~ /\-/) {
-                $a = $high_number - $low_number;
-            }
-            elsif ($a =~ /\+/) {
-                $a = $high_number + $low_number;
-            }
-        }
-        elsif ($a =~ /'(h|H)\s*?(\w+)\s*?/) {
-            $a = hex($2);
-        }
-        elsif ($a =~ /'(b|B)\s*?(\w+)\s*?/) {
-            $a = oct("0b$2");
-        }
-        elsif ($a =~ /'(o|O)\s*?(\w+)\s*?/) {
-            $a = oct("0$2");
-        }
-        elsif ($a =~ /'(d|D)\s*?(\w+)\s*?/) {
-            $a = $2;
-        }
-        else {
-            $a =~ s/^\s+//;
-            $a =~ s/\s+$//;
-        }
-    }
-
-    return @bits;
 }
 
 =head1        find timing always block in module
