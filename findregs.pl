@@ -2,7 +2,7 @@
 ##################################################################################
 # Author        : ylu
 # Data          : 2022.12.18
-# Revision      : 1.5
+# Revision      : 0.6
 # Purpose       : Find all regs.
 ##################################################################################
 #
@@ -21,6 +21,7 @@
 # 22.12.17      add support parameterized regs.
 # 22.12.18      add support parameters in the parameter  (e.g. parameter AA=BB+1;)
 #               and bit width multiple addition and subtraction. (e.g. 1'b1-2+3'h7)
+# 22.12.23      fix bug that identify macro code block.
 
 
 ############################# read verilog filelist ##############################
@@ -69,9 +70,15 @@ foreach $a (@file_list_pure) {
     foreach $b (@file) {
          # In Veriog, parameters defined by parameter can only be accessed directly, 
          # and parameters define by `define can only be accessed by `
-        if($b =~ /\`define\s+(\w+)\s+(.*)\n?$/){              
-            push(@param_common_name, $1);
-            push(@param_common_number, $2);
+        if($b =~ /\`define\s+(\w+)\s+([\s|\S]+)\s*\n?/){   
+            my $name = $1;
+            my $number = $2;
+            if ($number =~ /\w/) {
+                $number =~ s/^\s+//;
+                $number =~ s/\s+$//;
+                push(@param_common_name, $name);
+                push(@param_common_number, $number);
+            }
         }
     }
 }
@@ -246,7 +253,7 @@ sub find_macro {
             if ($flag == 0){                # finding finish
                 $end_num = $i;
                 @macro_code[$start_num...$end_num] = find_macro(@macro_next);
-                
+                @macro_next = '';           # clear array
             }
         }
         elsif ($flag > 0) {
@@ -587,7 +594,7 @@ sub replace_param {
                 my $tmp_change = $param_self_number[$i];
                 $tmp_change =~ s/^\s+//;
                 $tmp_change =~ s/\s+$//;
-                $b =~ s/\`?\b$param_self_name[$i]\b/$tmp_change/g;
+                $b =~ s/\`?\b$param_self_name[$i]\b/\($tmp_change\)/g;  # () used to give priority to operations
             }
         }
     }
@@ -612,7 +619,7 @@ sub replace_param_in_param {
             my $tmp_number = $param_self_number_global[$j];
             $tmp_number =~ s/^\s+//;
             $tmp_number =~ s/\s+$//;
-            $tmp_param_number =~ s/\`?\b$param_self_name_global[$j]\b/$tmp_number/g;
+            $tmp_param_number =~ s/\`?\b$param_self_name_global[$j]\b/\($tmp_number\)/g;    # () used to give priority to operations
         }
     }
 
@@ -742,6 +749,7 @@ sub find_signals {
         $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;      # decimal
 
         $a = eval($a);
+
     }
     foreach $a (@regs_bits_low_real) {
         $a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                 # if "0011 + 1", then "11+1". avoid being mistaken for octal.
