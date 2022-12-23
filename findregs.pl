@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.18
-# Revision      : 0.6
+# Data          : 2022.12.23
+# Revision      : 0.7
 # Purpose       : Find all regs.
 ##################################################################################
 #
@@ -22,6 +22,7 @@
 # 22.12.18      add support parameters in the parameter  (e.g. parameter AA=BB+1;)
 #               and bit width multiple addition and subtraction. (e.g. 1'b1-2+3'h7)
 # 22.12.23      fix bug that identify macro code block.
+# 22.12.23      add support internal macro definition in code.
 
 
 ############################# read verilog filelist ##############################
@@ -36,21 +37,141 @@ print "Please input top module name:\n";
 $top_module = "test_top";#<STDIN>;
 chomp($top_module);
 
-print "Please input macrolist name:\n";
+print "Please input additional macrolist name:\n";
 $macrolist_name = "macrolist.f";#<STDIN>;
 chomp($macrolist_name);
 open (MACRO_LIST, "<$macrolist_name") or die "Can't open $macrolist_name: $!";
 @macro_list = <MACRO_LIST>;
 close MACRO_LIST;
 
+print "Please input first include file name:\n";
+$first_include_file_name = "defs.v";#<STDIN>;
+chomp($first_include_file_name);
 
-############################### clear verilog code ###############################
-# First, filter out verilog code comments.
-# And Pick the part that meets the macro definition.
+
+################################# delete comments ################################
+mkdir "no_comment_files";
+open (V_FILELIST_NO_COMMENT, ">filelist_no_comment.f") or die "Can't write filelist_no_comment.f: $!";
+foreach $a (@file_list) {
+    open (FILE_TMP, "<$a") or die "Can't open $a: $!";
+    my @vfile = <FILE_TMP>;
+    close FILE_TMP;
+    my $flag = 0;
+    for(my $i = 0; $i < @vfile ; $i++) {
+        $vfile[$i] =~ s/\/\/.*//g;          # clear // commented code
+        $vfile[$i] =~ s/\/\*.*?\*\///g;     # clear /**/ single line comment code
+        
+        if ($vfile[$i] =~ /\*\//) {         # clear /**/ multiline comment code
+            $flag = 0;
+            $vfile[$i] =~ s/.*\*\///g;
+            if($vfile[$i] =~ /\/\*/) {      # prevent this situation: " */ code /* "
+                $flag = 1;
+                $vfile[$i] =~ s/\/\*.*//g;
+            }
+        }
+        elsif ($vfile[$i] =~ /\/\*/){
+            $flag = 1;
+            $vfile[$i] =~ s/\/\*.*//g;
+        }
+        elsif ($flag == 1) {
+            $vfile[$i] =~ s/.*//g;
+        }
+    }
+
+    $a =~ /(\w+)\.v/;
+    my $file_name_no_comment = "no_comment_".$1.".v";
+    print V_FILELIST_NO_COMMENT "./no_comment_files/$file_name_no_comment\n";
+    open (NO_COMMENT_CODE, ">./no_comment_files/$file_name_no_comment") or die "Can't write $file_name_no_comment: $!";
+    print NO_COMMENT_CODE @vfile;
+    close NO_COMMENT_CODE;
+}
+close V_FILELIST_NO_COMMENT;
+
+# open filelist no comment
+open (V_FILELIST_NO_COMMENT, "<filelist_no_comment.f");
+@file_list_no_comment = <V_FILELIST_NO_COMMENT>;
+close V_FILELIST_NO_COMMENT;
+
+
+############################# filter macro code block ############################
+###### find out all macros ######
+# find all verilog file with defining macro (e.g. `define TEST).
+@filelist_define_macro;                    # file that use "`define" to define macro.
+foreach $a (@file_list_no_comment) {
+
+    open (DEFINE_TMP, "<$a") or die "Can't open $a: $!";
+    my @vfile = <DEFINE_TMP>;
+    close DEFINE_TMP;
+
+    my $flag_define = 0;
+    foreach $b (@vfile) {
+        if ($b =~ /\`define\s+(\w+)\s*$/) {
+            $flag_define = 1;
+            last;
+        }
+    }
+    if ($flag_define == 1) {
+        push(@filelist_define_macro, $a);
+    }
+}
+
+@filelist_include_macro;                    # file that use "`include" to get macro.
+# find all macro in first include file.
+foreach $a (@file_list_no_comment) {
+    if ($a =~ /$first_include_file_name/) {
+        my @vfile = clear_macro($a);
+
+        push(@filelist_include_macro, $a);
+        # push common macro.
+        foreach $c (@vfile) {
+            if ($c =~ /\`define\s+(\w+)\s*$/) {
+                push(@macro_list, $1);
+            }
+        }
+    }
+}
+
+# find all macro by defining
+find_include_macro($first_include_file_name);
+
+# if macro definition does not apply `include.
+foreach $a (@filelist_define_macro) {
+    if(grep { $a eq $_} @filelist_include_macro) {
+        next;
+    }
+    else {
+        my @vfile = clear_macro($a);
+
+        push(@filelist_include_macro, $a);
+        # push common macro.
+        foreach $c (@vfile) {
+            if ($c =~ /\`define\s+(\w+)\s*$/) {
+                push(@macro_list, $1);
+            }
+        }
+    }
+}
+
+# delete macro code block without macro definition. 
 mkdir "pure_files";
 open (V_FILELIST_PURE, ">filelist_pure.f") or die "Can't write filelist_pure.f: $!";
-foreach $a (@file_list) {
-    clear_verilog($a, @macro_list);
+foreach $a (@file_list_no_comment) {
+    my @vfile = clear_macro($a);
+    
+    ###### delete blank lines ######
+    my @vfile_real;
+    foreach $a (@vfile) {
+        if ($a =~ /\w|\(|\)/){
+            push (@vfile_real, $a);
+        }
+    }
+
+    $a =~ /no_comment_(\w+)\.v/;
+    my $file_name_pure = "pure_".$1.".v";
+    print V_FILELIST_PURE "./pure_files/$file_name_pure\n";
+    open (PURE_CODE, ">./pure_files/$file_name_pure") or die "Can't write $file_name_pure: $!";
+    print PURE_CODE @vfile_real;
+    close PURE_CODE;
 }
 close V_FILELIST_PURE;
 
@@ -136,44 +257,66 @@ close REGS_RESULT;
 #   sub functions
 #
 ##################################################################################
-=head1       clear verilog code
-    @INPUT  $file_name_original, @macro_list
+=head1       find all macros by defining
+    @INPUT  $include_name
     @return NONE
-        delete the comment code, and find out the macro definition code.
+        This can only find the macro defined in the file using {include "**.v"}.
+            so please standardize the verilog code.
 =cut
-sub clear_verilog {
-    my ($file_name_original, @macro_list) = @_;
+sub find_include_macro {
+    my ($include_name) = @_;
 
-    open (FILE_TMP, "<$file_name_original") or die "Can't open $file_name_original, $!";
+    my @next_include_name;
+    foreach $a (@filelist_define_macro) {
+        open (DEFINE_TMP, "<$a") or die "Can't open $a: $!";
+        my @vfile = <DEFINE_TMP>;
+        close DEFINE_TMP;
+
+        my $flag_include = 0;
+        foreach $b (@vfile) {
+            if ($b =~ /\`include\s+\"\s*$include_name\s*\"/) {
+                $flag_include = 1;
+                last;
+            }
+        }
+        if ($flag_include == 1) {
+            $a =~ /no_comment_(\w+)\.v/;
+            push(@next_include_name, "$1".".v");
+            push(@filelist_include_macro, $a);
+
+            @vfile = clear_macro($a);
+            # push common macro.
+            foreach $c (@vfile) {
+                if ($c =~ /\`define\s+(\w+)\s*$/) {
+                    push(@macro_list, $1);
+                }
+            }
+        }
+    }
+
+    foreach $a (@next_include_name) {
+        find_include_macro($a);
+    }
+}
+
+=head1       clear macro code block
+    @INPUT  $file_name
+    @return @file after clearing macro block
+        find out the macro definition code.
+=cut
+sub clear_macro {
+    my ($file_name) = @_;
+
+    open (FILE_TMP, "<$file_name") or die "Can't open $file_name, $!";
     my @vfile = <FILE_TMP>;
     close FILE_TMP;
 
     my @macro_start_num;
     my @macro_end_num;
 
-    ###### clear comment code ######
-    my $flag = 0;
+    ###### find macro code ######
     my $flag_macro = 0;                     # prevent macro code blocks including macro code blocks.
     for(my $i = 0; $i < @vfile ; $i++) {
-        $vfile[$i] =~ s/\/\/.*//g;          # clear // commented code
-        $vfile[$i] =~ s/\/\*.*?\*\///g;     # clear /**/ single line comment code
-        
-        if ($vfile[$i] =~ /\*\//) {         # clear /**/ multiline comment code
-            $flag = 0;
-            $vfile[$i] =~ s/.*\*\///g;
-            if($vfile[$i] =~ /\/\*/) {      # prevent this situation: " */ code /* "
-                $flag = 1;
-                $vfile[$i] =~ s/\/\*.*//g;
-            }
-        }
-        elsif ($vfile[$i] =~ /\/\*/){
-            $flag = 1;
-            $vfile[$i] =~ s/\/\*.*//g;
-        }
-        elsif ($flag == 1) {
-            $vfile[$i] =~ s/.*//g;
-        }
-
         if ($vfile[$i] =~ /\`ifn?def/){         # find out the macro code number
             if ($flag_macro == 0) {             # first meet
                 push(@macro_start_num, $i);
@@ -204,21 +347,7 @@ sub clear_verilog {
         @vfile[$macro_start_num[$i]...$macro_end_num[$i]] = find_macro(@macro_next);
     }
 
-    ###### delete blank lines ######
-    my @vfile_real;
-    foreach $a (@vfile) {
-        if ($a =~ /\w|\(|\)/){
-            push (@vfile_real, $a);
-        }
-    }
-
-    $file_name_original =~ /(\w+)\.v/;
-    my $file_name_pure = "pure_".$1.".v";
-    print V_FILELIST_PURE "./pure_files/$file_name_pure\n";
-    open (PURE_CODE, ">./pure_files/$file_name_pure") or die "Can't write $file_name_pure: $!";
-    print PURE_CODE @vfile_real;
-    close PURE_CODE;
-
+    return @vfile;
 }
 
 =head1            find macro code block
