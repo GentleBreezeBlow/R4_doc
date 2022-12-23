@@ -131,7 +131,7 @@ foreach $a (@file_list_no_comment) {
     }
 }
 
-# find all macro by defining
+# find all macro defined
 find_include_macro($first_include_file_name);
 
 # if macro definition does not apply `include.
@@ -221,7 +221,7 @@ foreach $filename (@file_list_pure) {
     foreach $a (@file) {
         if($a =~ /\s*module\s+(\w+)\s*?\(?/){
             push(@all_module_name, $1);
-            push(@module_file_result, "$1$filename");
+            push(@module_file_result, "$1"."===>"."$filename");
         }
     }
     close FILE_FOR_MODULE;
@@ -257,7 +257,7 @@ close REGS_RESULT;
 #   sub functions
 #
 ##################################################################################
-=head1       find all macros by defining
+=head1       find all macros defined
     @INPUT  $include_name
     @return NONE
         This can only find the macro defined in the file using {include "**.v"}.
@@ -499,7 +499,7 @@ sub find_module {
 
     my $file_name;
     foreach $a (@module_file_result) {
-        if ($a =~ /$module_name(.*).v/) {
+        if ($a =~ /$module_name===>(.*).v/) {
             $file_name = "$1.v";
             last;
         }
