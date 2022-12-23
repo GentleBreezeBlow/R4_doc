@@ -1,14 +1,15 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.21
-# Revision      : 0.2
+# Data          : 2022.12.23
+# Revision      : 0.3
 # Purpose       : inject register fault and count error rate.
 ##################################################################################
 #
 ###### updata log ######
 # 22.12.19      first version.
 # 22.12.21      complete random injection and result statistics output
+# 22.12.23      add support for removing modules without regs.
 
 
 ########################## read tb and other information #########################
@@ -47,40 +48,58 @@ close REGS_DATA;
 
 
 ############################# random fault injection #############################
+# remove module without regs
+$regs_lines = join ('', @regs_data);
+open (INST_WITH_REGS_DATA, ">inst_with_regs.data") or die "Can't write inst_with_regs.data: $!";
+@inst_data_with_regs;
+
 @error_rate_data;
 @fail_num_data;
 foreach $a (@inst_data) {
-    print "Start fault injection for module $a\n";
-    my @regs;
-    foreach $b (@regs_data) {
-        if ($b =~ /$a/) {
-            push (@regs, $b);
-        }
-    }
-    my $fail_num = 0;
-    for (my $i = 1 ; $i <= $program_num ; $i ++) {
-        generate_tb(@regs);
-        print "running times: $i\n";
-        my $vcs_log = `make`;                             # don't use system() because system() will print the command 'make' results.
-        if ($vcs_log !~ /V C S   S i m u l a t i o n   R e p o r t/) {
-            die "vcs sim error.";
-        }
-        open (V_RESULT, "<vcs_result.data");
-        my $v_result = <V_RESULT>;
-        close V_RESULT;
-        print "result: $v_result\n";
-        if ($v_result =~ /FAIL/) {
-            $fail_num ++;
-        }
-        printf "progress: %.2f\%\n",$i/$program_num*100;
-    }
+    $a =~ s/^\s+//;
+    $a =~ s/\s+$//;
+    
+    if ($regs_lines =~ /$a/) {      # module with regs
+        push (@inst_data_with_regs, $a);
+        print INST_WITH_REGS_DATA "$a\n";
 
-    my $error_rate = $fail_num/$program_num;
-    print "module $a error number: $fail_num\n";
-    push(@fail_num_data, $fail_num);
-    printf "module $a Error Rate : %.2f\%\n\n",$error_rate*100;
-    push(@error_rate_data, $error_rate*100);
+        print "Start fault injection for module $a\n";
+        my @regs;
+        foreach $b (@regs_data) {
+            if ($b =~ /$a/) {
+                push (@regs, $b);
+            }
+        }
+        my $fail_num = 0;
+        for (my $i = 1 ; $i <= $program_num ; $i ++) {
+            generate_tb(@regs);
+            print "running times: $i\n";
+            my $vcs_log = `make`;                             # don't use system() because system() will print the command 'make' results.
+            if ($vcs_log !~ /V C S   S i m u l a t i o n   R e p o r t/) {
+                die "vcs sim error.";
+            }
+            open (V_RESULT, "<vcs_result.data");
+            my $v_result = <V_RESULT>;
+            close V_RESULT;
+            print "result: $v_result\n";
+            if ($v_result =~ /FAIL/) {
+                $fail_num ++;
+            }
+            printf "progress: %.2f\%\n",$i/$program_num*100;
+        }
+
+        my $error_rate = $fail_num/$program_num;
+        print "module $a error number: $fail_num\n";
+        push(@fail_num_data, $fail_num);
+        printf "module $a Error Rate : %.2f\%\n\n",$error_rate*100;
+        push(@error_rate_data, $error_rate*100);
+    }
+    else {      # module without regs
+        push(@fail_num_data, "-");
+        push(@error_rate_data, 0);
+    }
 }
+close INST_WITH_REGS_DATA;
 
 
 ############################## format output results #############################
@@ -109,10 +128,18 @@ print OUTPUT "name".$space x ($length_inst-4+5).
 "error rate".$space x (10+5)."\n";
 print OUTPUT '=' x (4+$length_inst-4+5+11+11+5+14+14+5+10)."\n";
 for (my $n ; $n < @inst_data ; $n ++) {
-    printf OUTPUT "$inst_data[$n]".$space x ($length_inst-length($inst_data[$n])+5).
-    "$fail_num_data[$n]".$space x (11+5-length($fail_num_data[$n])+11).
-    "$program_num".$space x (14+5-$length_program_num+14).
-    "%.2f\%\n",$error_rate_data[$n];
+    if ($fail_num_data[$n] eq "-") {
+        printf OUTPUT "$inst_data[$n]".$space x ($length_inst-length($inst_data[$n])+5).
+        "$fail_num_data[$n]".$space x (11+5-length($fail_num_data[$n])+11).
+        "$program_num".$space x (14+5-$length_program_num+14).
+        "No Regs";
+    }
+    else {
+        printf OUTPUT "$inst_data[$n]".$space x ($length_inst-length($inst_data[$n])+5).
+        "$fail_num_data[$n]".$space x (11+5-length($fail_num_data[$n])+11).
+        "$program_num".$space x (14+5-$length_program_num+14).
+        "%.2f\%\n",$error_rate_data[$n];
+    }
 }
 close OUTPUT;
 
