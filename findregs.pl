@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.23
-# Revision      : 0.7
+# Data          : 2022.12.29
+# Revision      : 0.8
 # Purpose       : Find all regs.
 ##################################################################################
 #
@@ -23,6 +23,7 @@
 #               and bit width multiple addition and subtraction. (e.g. 1'b1-2+3'h7)
 # 22.12.23      fix bug that identify macro code block.
 # 22.12.23      add support internal macro definition in code.
+# 22.12.29      add export the instantiation of modules containing regs.
 
 
 ############################# read verilog filelist ##############################
@@ -36,6 +37,10 @@ close V_FILELIST;
 print "Please input top module name:\n";
 $top_module = "test_top";#<STDIN>;
 chomp($top_module);
+
+print "Please input top inst name:\n";
+$name_inst = "dut";#<STDIN>;
+chomp($name_inst);
 
 print "Please input additional macrolist name:\n";
 $macrolist_name = "macrolist.f";#<STDIN>;
@@ -237,10 +242,10 @@ print "all module : @all_module_name\n";
 ###################### find reg/instantiation relationship #######################
 open (REGS_RESULT, ">regs.data") or die "Can't write regs.data: $!";
 open (INST_DATA, ">inst.data") or die "Can't write inst.data: $!";
+open (INST_WITH_REGS_DATA, ">inst_with_regs.data") or die "Can't write inst_with_regs.data: $!";
 
-$name_inst = $top_module;
 # top module regs
-my @file_top = find_module($name_inst);
+my @file_top = find_module($top_module);
 my ($file_noparam_top, $param_this_layer_name_top, $param_this_layer_number_top) 
    = replace_param('', \@file_top, \@param_common_name, \@param_common_number);
 find_signals($name_inst, @{$file_noparam_top});
@@ -249,6 +254,7 @@ find_inst(\@file_top, $param_this_layer_name_top, $param_this_layer_number_top);
 
 close INST_DATA;
 close REGS_RESULT;
+close INST_WITH_REGS_DATA;
 
 
 
@@ -900,6 +906,10 @@ sub find_signals {
         if(defined($regs_bits_real[$k])) {
             print REGS_RESULT "$name_inst_tmp.$regs_bits_real[$k]\[$regs_bits_high_real[$k]:$regs_bits_low_real[$k]\]\n";
         }
+    }
+
+    if ((@regs_bit_real) || (@regs_bits_real)) {
+        print INST_WITH_REGS_DATA "$name_inst_tmp\n";
     }
 
 }
