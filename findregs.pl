@@ -25,6 +25,7 @@
 # 22.12.23      add support internal macro definition in code.
 # 22.12.29      add export the instantiation of modules containing regs.
 # 22.12.30      fix bug that parameters convert to real number.
+#               fix bug that recognize registers in function.
 
 
 
@@ -830,9 +831,9 @@ sub find_signals {
             my $bits_low = $2;
             my $bits = $3;
             my $tmp;
-            while ($bits =~ /([\s|\S]*?),([\s|\S]*)/g) {
-                $bits = $2;
-                $tmp = $1;
+            while ($bits =~ /([\s|\S]*),([\s|\S]*)/g) {
+                $bits = $1;
+                $tmp = $2;
                 $tmp =~ s/^\s+//;                       # clear space
                 $tmp =~ s/\s+$//;                       # clear space
                 push(@regs_bits_high, $bits_high);
@@ -848,9 +849,9 @@ sub find_signals {
         elsif ($regs_data =~ /\s+reg\s+([\s|\S]*);/g) {
             my $bit = $1;
             my $tmp;
-            while ($bit =~ /([\s|\S]*?),([\s|\S]*)/g) {
-                $bit = $2;
-                $tmp = $1;
+            while ($bit =~ /([\s|\S]*),([\s|\S]*)/g) {
+                $bit = $1;
+                $tmp = $2;
                 $tmp =~ s/^\s+//;
                 $tmp =~ s/\s+$//;
                 push(@regs_bit, $tmp);
@@ -956,6 +957,9 @@ sub find_always {
         elsif ($file[$num_end] =~ /assign\s+/) {
             last;
         }
+        elsif ($file[$num_end] =~ /function\s+/) {
+            last;
+        }
         elsif ($file[$num_end] =~ /endmodule/) {
             last;
         }
@@ -964,10 +968,10 @@ sub find_always {
     my @regs_always;
     
     my $lines = join ('', @file[$num...$num_end]);
-    while ($lines =~ /\s*(\w+)\s*?<?\s*=/g) {               # test_reg <= 0;
+    while ($lines =~ /\s*(\w+)\s*?<\s*=/g) {               # test_reg <= 0;
         push(@regs_always, $1);
     }
-    while ($lines =~ /\s*?\{([\s|\S]*?)\}\s*<?\s*=/g) {     # {test1, test2} <= 0;
+    while ($lines =~ /\s*?\{([\s|\S]*?)\}\s*<\s*=/g) {     # {test1, test2} <= 0;
         my $tmp = $1;
         while ($tmp =~ /([\s|\S]*),([\s|\S]*)/g) {
             $tmp = $1;
