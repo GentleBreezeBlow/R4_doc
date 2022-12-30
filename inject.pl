@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.23
-# Revision      : 0.3
+# Data          : 2022.12.30
+# Revision      : 0.4
 # Purpose       : inject register fault and count error rate.
 ##################################################################################
 #
@@ -10,6 +10,8 @@
 # 22.12.19      first version.
 # 22.12.21      complete random injection and result statistics output
 # 22.12.23      add support for removing modules without regs.
+# 22.12.30      fix bug of identification regs.
+
 
 
 ########################## read tb and other information #########################
@@ -48,10 +50,7 @@ close REGS_DATA;
 
 
 ############################# random fault injection #############################
-# remove module without regs
-$regs_lines = join ('', @regs_data);
-open (INST_WITH_REGS_DATA, ">inst_with_regs.data") or die "Can't write inst_with_regs.data: $!";
-@inst_data_with_regs;
+$regs_lines = join ('===', @regs_data);
 
 @error_rate_data;
 @fail_num_data;
@@ -59,14 +58,11 @@ foreach $a (@inst_data) {
     $a =~ s/^\s+//;
     $a =~ s/\s+$//;
     
-    if ($regs_lines =~ /$a/) {      # module with regs
-        push (@inst_data_with_regs, $a);
-        print INST_WITH_REGS_DATA "$a\n";
-
+    if ($regs_lines =~ /$a\.[^\.]*===/) {      # module with regs
         print "Start fault injection for module $a\n";
         my @regs;
         foreach $b (@regs_data) {
-            if ($b =~ /$a/) {
+            if ($b =~ /$a\.[^\.]*$/) {
                 push (@regs, $b);
             }
         }
@@ -99,7 +95,6 @@ foreach $a (@inst_data) {
         push(@error_rate_data, 0);
     }
 }
-close INST_WITH_REGS_DATA;
 
 
 ############################## format output results #############################

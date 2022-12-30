@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.29
-# Revision      : 0.8
+# Data          : 2022.12.30
+# Revision      : 0.9
 # Purpose       : Find all regs.
 ##################################################################################
 #
@@ -24,6 +24,8 @@
 # 22.12.23      fix bug that identify macro code block.
 # 22.12.23      add support internal macro definition in code.
 # 22.12.29      add export the instantiation of modules containing regs.
+# 22.12.30      fix bug that parameters convert to real number.
+
 
 
 ############################# read verilog filelist ##############################
@@ -213,6 +215,21 @@ foreach $a (@file_list_pure) {
 # are used for recursive subfunction 'replace_param_in_param'.
 @param_self_name_global;
 @param_self_number_global;
+
+# output common parameters to file.
+@param_self_name_global = @param_common_name;
+@param_self_number_global = @param_common_number;
+for (my $i = 0 ; $i < @param_self_number_global ; $i ++) {
+    $param_self_number_global[$i] = replace_param_in_param($param_self_number_global[$i]);
+}
+@param_common_name = @param_self_name_global;
+@param_common_number = @param_self_number_global;
+open (COMMON_PARAMS, ">common_params.data") or die "Can't write common_params.data: $!";
+for (my $param_cnt = 0 ; $param_cnt < @param_common_name ; $param_cnt ++) {
+    print COMMON_PARAMS $param_common_name[$param_cnt];
+    print COMMON_PARAMS "\t\t$param_common_number[$param_cnt]\n";
+}
+close COMMON_PARAMS;
 
 
 ################################ find all modules ################################
@@ -877,21 +894,29 @@ sub find_signals {
     # convert to real number
     # e.g. "[5-1:0]", "[5 - 1 + 21:0]", "[3'h7:1'b0]", "[2'b11 - 1:0]" etc.
     foreach $a (@regs_bits_high_real) {
-        $a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                 # if "0011 + 1", then "11+1". avoid being mistaken for octal.
-        $a =~ s/\d*?\'(h|H)\s*?(\w+)\s*?/0x$2/g;        # hexadecimal
-        $a =~ s/\d*?\'(b|B)\s*?(\w+)\s*?/0b$2/g;        # binary
-        $a =~ s/\d*?\'(o|O)\s*?(\w+)\s*?/0$2/g;         # octal
-        $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;      # decimal
+        #$a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                        # if "0011 + 1", then "11+1". avoid being mistaken for octal.
+        $a =~ s/\d*?\'(h|H)\s*?(\w+)\s*?/0x$2/g;                # hexadecimal
+        $a =~ s/\d*?\'(h|H)\s*?\(\s*?(\w+)\s*?\)\s*?/0x$2/g;
+        $a =~ s/\d*?\'(b|B)\s*?(\w+)\s*?/0b$2/g;                # binary
+        $a =~ s/\d*?\'(b|B)\s*?\(\s*?(\w+)\s*?\)\s*?/0b$2/g;    
+        $a =~ s/\d*?\'(o|O)\s*?(\w+)\s*?/0$2/g;                 # octal
+        $a =~ s/\d*?\'(o|O)\s*?\(\s*?(\w+)\s*?\)\s*?/0$2/g;
+        $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;              # decimal
+        $a =~ s/\d*?\'(d|D)\s*?\(\s*?[0]*(\w+)\s*?\)\s*?/$2/g;
 
         $a = eval($a);
 
     }
     foreach $a (@regs_bits_low_real) {
-        $a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                 # if "0011 + 1", then "11+1". avoid being mistaken for octal.
-        $a =~ s/\d*?\'(h|H)\s*?(\w+)\s*?/0x$2/g;        # hexadecimal
-        $a =~ s/\d*?\'(b|B)\s*?(\w+)\s*?/0b$2/g;        # binary
-        $a =~ s/\d*?\'(o|O)\s*?(\w+)\s*?/0$2/g;         # octal
-        $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;      # decimal
+        #$a =~ s/\s*?[0]*(\w+)\s*?/$1/g;                        # if "0011 + 1", then "11+1". avoid being mistaken for octal.
+        $a =~ s/\d*?\'(h|H)\s*?(\w+)\s*?/0x$2/g;                # hexadecimal
+        $a =~ s/\d*?\'(h|H)\s*?\(\s*?(\w+)\s*?\)\s*?/0x$2/g;
+        $a =~ s/\d*?\'(b|B)\s*?(\w+)\s*?/0b$2/g;                # binary
+        $a =~ s/\d*?\'(b|B)\s*?\(\s*?(\w+)\s*?\)\s*?/0b$2/g;    
+        $a =~ s/\d*?\'(o|O)\s*?(\w+)\s*?/0$2/g;                 # octal
+        $a =~ s/\d*?\'(o|O)\s*?\(\s*?(\w+)\s*?\)\s*?/0$2/g;
+        $a =~ s/\d*?\'(d|D)\s*?[0]*(\w+)\s*?/$2/g;              # decimal
+        $a =~ s/\d*?\'(d|D)\s*?\(\s*?[0]*(\w+)\s*?\)\s*?/$2/g;
 
         $a = eval($a);
     }
