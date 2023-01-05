@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.30
-# Revision      : 0.9
+# Data          : 2023.01.05
+# Revision      : 1.0
 # Purpose       : Find all regs.
 ##################################################################################
 #
@@ -26,6 +26,7 @@
 # 22.12.29      add export the instantiation of modules containing regs.
 # 22.12.30      fix bug that parameters convert to real number.
 #               fix bug that recognize registers in function.
+# 23.01.05      fix bug when finding macro.
 
 
 
@@ -385,7 +386,7 @@ sub clear_macro {
 =cut
 sub find_macro {
     my (@macro_code) = @_;
-    
+
     my $flag = 0;
     my $start_num;
     my $end_num;
@@ -406,7 +407,8 @@ sub find_macro {
             if ($flag == 0){                # finding finish
                 $end_num = $i;
                 @macro_code[$start_num...$end_num] = find_macro(@macro_next);
-                @macro_next = '';           # clear array
+                my @tmp;                    # make sure @macro_next is an empty array
+                @macro_next = @tmp;         # clear array
             }
         }
         elsif ($flag > 0) {
