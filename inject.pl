@@ -12,6 +12,7 @@
 # 22.12.23      add support for removing modules without regs.
 # 22.12.30      fix bug of identification regs.
 #               optimize formatted output results.
+# 23.02.20      modify fault injection mode.
 
 
 
@@ -90,9 +91,9 @@ foreach $a (@inst_data) {
             print "running times: $i\n";
             my $v_result;
             my $vcs_error = 0;
-            #my $vcs_log = `make`;                             # don't use system() because system() will print the command 'make' results.
+            my $vcs_log = `make`;                             # don't use system() because system() will print the command 'make' results.
             if ($vcs_log !~ /V C S   S i m u l a t i o n   R e p o r t/) {
-                print "vcs sim error.";
+                print "vcs sim error.\n";
                 $v_result = "FAIL";
                 $vcs_error = 1;
             }
@@ -164,20 +165,32 @@ sub generate_tb {
                 my $time = int ( rand($inject_end_time-$inject_start_time+1) ) + $inject_start_time;
 
                 if ($one_rand > $two_rand) {
+                    push(@tb, "reg \[$one_rand\:$two_rand\] tmp\_$i\_$j;\n");
                     push(@tb, "initial begin\n");
-                    push(@tb, "  #$time"."ns $reg_bits\[$one_rand\:$two_rand\] = ~$reg_bits\[$one_rand\:$two_rand\];\n");
+                    push(@tb, "  tmp\_$i\_$j = 'b0;\n");
+                    push(@tb, "  #$time"."ns tmp\_$i\_$j = ~$reg_bits\[$one_rand\:$two_rand\];\n");
+                    push(@tb, "    force $reg_bits\[$one_rand\:$two_rand\] = tmp\_$i\_$j;\n");
+                    push(@tb, "  #10ns release $reg_bits\[$one_rand\:$two_rand\];\n");
                     push(@tb, "end\n");
                     push(@tb, "\n");
                 }
                 elsif ($two_rand > $one_rand) {
+                    push(@tb, "reg \[$two_rand\:$one_rand\] tmp\_$i\_$j;\n");
                     push(@tb, "initial begin\n");
-                    push(@tb, "  #$time"."ns $reg_bits\[$two_rand\:$one_rand\] = ~$reg_bits\[$two_rand\:$one_rand\];\n");
+                    push(@tb, "  tmp\_$i\_$j = 'b0;\n");
+                    push(@tb, "  #$time"."ns tmp\_$i\_$j = ~$reg_bits\[$two_rand\:$one_rand\];\n");
+                    push(@tb, "    force $reg_bits\[$two_rand\:$one_rand\] = tmp\_$i\_$j;\n");
+                    push(@tb, "  #10ns release $reg_bits\[$two_rand\:$one_rand\];\n");
                     push(@tb, "end\n");
                     push(@tb, "\n");
                 }
                 elsif ($two_rand == $one_rand) {
+                    push(@tb, "reg tmp\_$i\_$j;\n");
                     push(@tb, "initial begin\n");
-                    push(@tb, "  #$time"."ns $reg_bits\[$one_rand\] = ~$reg_bits\[$one_rand\];\n");
+                    push(@tb, "  tmp\_$i\_$j = 'b0;\n");
+                    push(@tb, "  #$time"."ns tmp\_$i\_$j = ~$reg_bits\[$one_rand\];\n");
+                    push(@tb, "    force $reg_bits\[$one_rand\] = tmp\_$i\_$j;\n");
+                    push(@tb, "  #10ns release $reg_bits\[$one_rand\];\n");
                     push(@tb, "end\n");
                     push(@tb, "\n");
                 }
@@ -188,8 +201,15 @@ sub generate_tb {
             for (my $j = 0 ; $j < $inject_num_per_reg ; $j ++) {
                 my $time = int ( rand($inject_end_time-$inject_start_time+1) ) + $inject_start_time;
 
+                my $regs_bit = $regs[$reg_num];
+                $regs_bit =~ s/^\s+//;
+                $regs_bit =~ s/\s+$//;
+                push(@tb, "reg tmp\_$i\_$j;\n");
                 push(@tb, "initial begin\n");
-                push(@tb, "  #$time"."ns $regs[$reg_num] = ~$regs[$reg_num];\n");
+                push(@tb, "  tmp\_$i\_$j = 'b0;\n");
+                push(@tb, "  #$time"."ns tmp\_$i\_$j = ~$regs_bit;\n");
+                push(@tb, "    force $regs_bit = tmp\_$i\_$j;\n");
+                push(@tb, "  #10ns release $regs_bit;\n");
                 push(@tb, "end\n");
                 push(@tb, "\n");
             }
