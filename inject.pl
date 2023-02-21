@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 ##################################################################################
 # Author        : ylu
-# Data          : 2022.12.30
-# Revision      : 0.5
+# Data          : 2023.02.21
+# Revision      : 0.6
 # Purpose       : inject register fault and count error rate.
 ##################################################################################
 #
@@ -13,6 +13,7 @@
 # 22.12.30      fix bug of identification regs.
 #               optimize formatted output results.
 # 23.02.20      modify fault injection mode.
+# 23.02.21      add reporting timeout numbers.
 
 
 
@@ -67,10 +68,12 @@ foreach $a (@inst_data) {
 $space=' ';
 open (OUTPUT, ">error_rate.data") or die "Can't write error_rate.data: $!";
 print OUTPUT "name".$space x ($length_inst-4+5).
-"fail number".$space x (11+5).
-"program number".$space x (14+5).
-"error rate".$space x (10+5)."\n";
-print OUTPUT '=' x (4+$length_inst-4+5+11+11+5+14+14+5+10)."\n";
+"sim fail num".$space x (5).
+"timeout num".$space x (5).
+"fail numb".$space x (5).
+"run num".$space x (5).
+"error rate\n";
+print OUTPUT '=' x (4+$length_inst-4+5+12+5+11+5+8+5+7+5+10)."\n";
 
 
 foreach $a (@inst_data) {
@@ -86,6 +89,7 @@ foreach $a (@inst_data) {
             }
         }
         my $fail_num = 0;
+        my $timeout_num = 0;
         for (my $i = 1 ; $i <= $program_num ; $i ++) {
             generate_tb(@regs);
             print "running times: $i\n";
@@ -106,30 +110,41 @@ foreach $a (@inst_data) {
             if ($v_result =~ /FAIL/) {
                 $fail_num ++;
             }
+            elsif ($v_result =~ /TIMEOUT/) {
+                $fail_num ++;
+                $timeout_num ++;
+            }
             printf "progress: %.2f\%\n",$i/$program_num*100;
         }
 
+        my $sim_fail_num = $fail_num - $timeout_num;
         my $error_rate = $fail_num/$program_num;
         print "module $a error number: $fail_num\n";
         printf "module $a Error Rate : %.2f\%\n\n",$error_rate*100;
         if ($vcs_error == 1) {
             printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
-            "$fail_num".$space x (11+5-length($fail_num)+11).
-            "$program_num".$space x (14+5-$length_program_num+14).
+            "$sim_fail_num".$space x (12+5-length($sim_fail_num)).
+            "$timeout_num".$space x (11+5-length($timeout_num)).
+            "$fail_num".$space x (8+5-length($fail_num)).
+            "$program_num".$space x (7+5-$length_program_num).
             "%.2f\%"."\tVCS SIM ERROR\n",$error_rate*100;
         }
         else {
             printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
-            "$fail_num".$space x (11+5-length($fail_num)+11).
-            "$program_num".$space x (14+5-$length_program_num+14).
+            "$sim_fail_num".$space x (12+5-length($sim_fail_num)).
+            "$timeout_num".$space x (11+5-length($timeout_num)).
+            "$fail_num".$space x (8+5-length($fail_num)).
+            "$program_num".$space x (7+5-$length_program_num).
             "%.2f\%\n",$error_rate*100;
         }
     }
     else {      # module without regs
         print "module $a don't have regs.\n";
         printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
-        "-".$space x (11+5-1+11).
-        "$program_num".$space x (14+5-$length_program_num+14).
+        "-".$space x (12+5-1).
+        "-".$space x (11+5-1).
+        "-".$space x (8+5-1).
+        "$program_num".$space x (7+5-$length_program_num).
         "No Regs\n";
     }
 }
