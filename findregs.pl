@@ -27,6 +27,7 @@
 # 22.12.30      fix bug that parameters convert to real number.
 #               fix bug that recognize registers in function.
 # 23.01.05      fix bug when finding macro.
+# 23.05.05      fix bug when finding "reg[1:0] <= 0;"
 
 
 
@@ -971,6 +972,9 @@ sub find_always {
     
     my $lines = join ('', @file[$num...$num_end]);
     while ($lines =~ /\s*(\w+)\s*?<\s*=/g) {               # test_reg <= 0;
+        push(@regs_always, $1);
+    }
+    while ($lines =~ /\s*(\w+)\s*?\[[\s|\S]*?\]\s*?<\s*=[\s|\S]*?;/g) {               # test_reg[1:0] <= 0;
         push(@regs_always, $1);
     }
     while ($lines =~ /\s*?\{([\s|\S]*?)\}\s*<\s*=/g) {     # {test1, test2} <= 0;

@@ -14,6 +14,7 @@
 #               optimize formatted output results.
 # 23.02.20      modify fault injection mode.
 # 23.02.21      add reporting timeout numbers.
+# 23.04.13      add single register fault injection.
 
 
 
@@ -41,6 +42,9 @@ print "Please input number of injections per register:\n";
 $inject_num_per_reg = "2";#<STDIN>;
 chomp($inject_num_per_reg);
 
+print "Please input single(1) or all(0) regs injection:\n";
+$single_inject_flag = "1";
+chomp($single_inject_flag);
 
 ############################### read regs and inst ###############################
 open (INST_DATA, "<inst.data") or die "Can't open inst.data: $!";
@@ -67,14 +71,24 @@ foreach $a (@inst_data) {
 }
 $space=' ';
 open (OUTPUT, ">error_rate.data") or die "Can't write error_rate.data: $!";
-print OUTPUT "name".$space x ($length_inst-4+5).
-"sim fail num".$space x (5).
-"timeout num".$space x (5).
-"fail numb".$space x (5).
-"run num".$space x (5).
-"error rate\n";
-print OUTPUT '=' x (4+$length_inst-4+5+12+5+11+5+8+5+7+5+10)."\n";
-
+if ($single_inject_flag == 1) {
+    print OUTPUT "name".$space x ($length_inst-4+5).
+    "rec success num".$space x (5).
+    "rec fail num".$space x (5).
+    "inject success num".$space x (5).
+    "total inject num".$space x (5).
+    "error rate\n";
+    print OUTPUT '=' x (4+$length_inst-4+5 +15+5 +12+5 +18+5 +16+5 +10)."\n";
+}
+else {
+    print OUTPUT "name".$space x ($length_inst-4+5).
+    "sim fail num".$space x (5).
+    "timeout num".$space x (5).
+    "fail num".$space x (5).
+    "run num".$space x (5).
+    "error rate\n";
+    print OUTPUT '=' x (4+$length_inst-4+5 +12+5 +11+5 +8+5 +7+5 +10)."\n";
+}
 
 foreach $a (@inst_data) {
     $a =~ s/^\s+//;
@@ -88,64 +102,33 @@ foreach $a (@inst_data) {
                 push (@regs, $b);
             }
         }
-        my $fail_num = 0;
-        my $timeout_num = 0;
-        for (my $i = 1 ; $i <= $program_num ; $i ++) {
-            generate_tb(@regs);
-            print "running times: $i\n";
-            my $v_result;
-            my $vcs_error = 0;
-            my $vcs_log = `make`;                             # don't use system() because system() will print the command 'make' results.
-            if ($vcs_log !~ /V C S   S i m u l a t i o n   R e p o r t/) {
-                print "vcs sim error.\n";
-                $v_result = "FAIL";
-                $vcs_error = 1;
+        if ($single_inject_flag == 1) {         # single reg injection
+            foreach $c (@regs) {                # inject faults into each register
+                fault_injection($a, $c);
             }
-            else {
-                open (V_RESULT, "<vcs_result.data");
-                $v_result = <V_RESULT>;
-                close V_RESULT;
-            }
-            print "result: $v_result\n";
-            if ($v_result =~ /FAIL/) {
-                $fail_num ++;
-            }
-            elsif ($v_result =~ /TIMEOUT/) {
-                $fail_num ++;
-                $timeout_num ++;
-            }
-            printf "progress: %.2f\%\n",$i/$program_num*100;
-        }
-
-        my $sim_fail_num = $fail_num - $timeout_num;
-        my $error_rate = $fail_num/$program_num;
-        print "module $a error number: $fail_num\n";
-        printf "module $a Error Rate : %.2f\%\n\n",$error_rate*100;
-        if ($vcs_error == 1) {
-            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
-            "$sim_fail_num".$space x (12+5-length($sim_fail_num)).
-            "$timeout_num".$space x (11+5-length($timeout_num)).
-            "$fail_num".$space x (8+5-length($fail_num)).
-            "$program_num".$space x (7+5-$length_program_num).
-            "%.2f\%"."\tVCS SIM ERROR\n",$error_rate*100;
         }
         else {
-            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
-            "$sim_fail_num".$space x (12+5-length($sim_fail_num)).
-            "$timeout_num".$space x (11+5-length($timeout_num)).
-            "$fail_num".$space x (8+5-length($fail_num)).
-            "$program_num".$space x (7+5-$length_program_num).
-            "%.2f\%\n",$error_rate*100;
+            fault_injection($a, @regs);
         }
     }
     else {      # module without regs
         print "module $a don't have regs.\n";
-        printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
-        "-".$space x (12+5-1).
-        "-".$space x (11+5-1).
-        "-".$space x (8+5-1).
-        "$program_num".$space x (7+5-$length_program_num).
-        "No Regs\n";
+        if ($single_inject_flag == 1){
+            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
+            "-".$space x (15+5-1).
+            "-".$space x (12+5-1).
+            "-".$space x (18+5-1).
+            "-".$space x (16+5-1).
+            "No Regs\n";
+        }
+        else {
+            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
+            "-".$space x (12+5-1).
+            "-".$space x (11+5-1).
+            "-".$space x (8+5-1).
+            "-".$space x (7+5-1).
+            "No Regs\n";
+        }
     }
 }
 close OUTPUT;
@@ -157,6 +140,116 @@ close OUTPUT;
 #   sub functions
 #
 ##################################################################################
+=head1           fault injection
+    @INPUT  NONE
+    @return NONE
+        Fault injection process.
+=cut
+sub fault_injection {
+    my ($a, @regs) = @_;
+    my $fail_num = 0;
+    my $timeout_num = 0;
+    my $inject_success_num_total = 0;
+    for (my $i = 1 ; $i <= $program_num ; $i ++) {
+        generate_tb(@regs);
+        print "running times: $i\n";
+        my $v_result;
+        my $vcs_error = 0;
+        my $vcs_log = `make`;                             # don't use system() because system() will print the command 'make' results.
+        if ($vcs_log !~ /V C S   S i m u l a t i o n   R e p o r t/) {
+            print "vcs sim error.\n";
+            $v_result = "FAIL";
+            $vcs_error = 1;
+        }
+        else {
+            open (V_RESULT, "<vcs_result.data");
+            $v_result = <V_RESULT>;
+            close V_RESULT;
+        }
+        print "result: $v_result\n";
+        if ($v_result =~ /FAIL/) {
+            $fail_num ++;
+        }
+        elsif ($v_result =~ /TIMEOUT/) {
+            $fail_num ++;
+            $timeout_num ++;
+        }
+
+        my $inject_success_num;
+        if ($single_inject_flag == 1) {
+            open (FAULT_RESULT, "<inject_success.data");
+            $inject_success_num = <FAULT_RESULT>;
+            close FAULT_RESULT;
+            $inject_success_num =~ /(\d+)/;
+            $inject_success_num = $1;
+            $inject_success_num_total = $inject_success_num_total + $inject_success_num;
+        }
+
+        printf "progress: %.2f\%\n",$i/$program_num*100;
+    }
+
+    my $sim_fail_num;
+    my $error_rate;
+    if ($single_inject_flag == 1) {
+        if ($inject_success_num_total != 0) {
+            $error_rate = $fail_num/$inject_success_num_total;
+        }
+        else {
+            $error_rate = 0;
+        }
+    }
+    else {
+        $error_rate = $fail_num/$program_num;
+    }
+
+    $sim_fail_num = $fail_num - $timeout_num;
+    
+    if ($single_inject_flag == 1){
+        printf "$regs[0] Error Rate : %.2f\%\n\n",$error_rate*100;
+
+        my $rec_success_num = $inject_success_num_total - $fail_num;
+        my $rec_fail_num = $fail_num;
+        my $total_inject_num = $program_num*$inject_num_per_reg;
+
+        if ($vcs_error == 1) {
+            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
+            "-".$space x (15+5-1).
+            "-".$space x (12+5-1).
+            "-".$space x (18+5-1).
+            "-".$space x (16+5-1).
+            "VCS SIM ERROR\n";
+        }
+        else {
+            printf OUTPUT "$regs[0]".$space x ($length_inst-length($regs[0])+5).
+            "$rec_success_num".$space x (15+5-length($rec_success_num)).
+            "$rec_fail_num".$space x (12+5-length($rec_fail_num)).
+            "$inject_success_num_total".$space x (18+5-length($inject_success_num_total)).
+            "$total_inject_num".$space x (16+5-length($total_inject_num)).
+            "%.2f\%\n",$error_rate*100;
+        }
+    }
+    else {
+        print "module $a error number: $fail_num\n";
+        printf "module $a Error Rate : %.2f\%\n\n",$error_rate*100;
+        if ($vcs_error == 1) {
+            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
+            "-".$space x (12+5-1).
+            "-".$space x (11+5-1).
+            "-".$space x (8+5-1).
+            "-".$space x (7+5-1).
+            "VCS SIM ERROR\n";
+        }
+        else {
+            printf OUTPUT "$a".$space x ($length_inst-length($a)+5).
+            "$sim_fail_num".$space x (12+5-length($sim_fail_num)).
+            "$timeout_num".$space x (11+5-length($timeout_num)).
+            "$fail_num".$space x (8+5-length($fail_num)).
+            "$program_num".$space x (7+5-$length_program_num).
+            "%.2f\%\n",$error_rate*100;
+        }
+    }
+}
+
 =head1           generate testbench
     @INPUT  NONE
     @return NONE
